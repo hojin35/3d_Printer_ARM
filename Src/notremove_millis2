@@ -1,0 +1,772 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+   @file           : main.c
+   @brief          : Main program body
+ ******************************************************************************
+   @attention
+
+   <h2><center>&copy; Copyright (c) 2021 STMicroelectronics.
+   All rights reserved.</center></h2>
+
+   This software component is licensed by ST under BSD 3-Clause license,
+   the "License"; You may not use this file except in compliance with the
+   License. You may obtain a copy of the License at:
+                          opensource.org/licenses/BSD-3-Clause
+
+ ******************************************************************************
+*/
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+//#include "gcode_sample_200.h"
+#include "gcode_sample_480_string.h"
+#include<stdlib.h>
+#include<string.h>
+#include<math.h>
+#include<stdio.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+#define X_EN_HIGH()      HAL_GPIO_WritePin(GPIOF,GPIO_PIN_2, GPIO_PIN_SET);
+#define X_DIR_HIGH()  HAL_GPIO_WritePin(GPIOF,GPIO_PIN_1, GPIO_PIN_SET);
+#define X_STEP_HIGH() HAL_GPIO_WritePin(GPIOE,GPIO_PIN_9, GPIO_PIN_SET);
+
+#define X_EN_LOW()      HAL_GPIO_WritePin(GPIOF,GPIO_PIN_2, GPIO_PIN_RESET);
+#define X_DIR_LOW()   HAL_GPIO_WritePin(GPIOF,GPIO_PIN_1, GPIO_PIN_RESET);
+#define X_STEP_LOW()  HAL_GPIO_WritePin(GPIOE,GPIO_PIN_9, GPIO_PIN_RESET);
+
+#define Y_EN_HIGH()   HAL_GPIO_WritePin(GPIOD,GPIO_PIN_7, GPIO_PIN_SET);
+#define Y_DIR_HIGH()  HAL_GPIO_WritePin(GPIOE,GPIO_PIN_8, GPIO_PIN_SET);
+#define Y_STEP_HIGH() HAL_GPIO_WritePin(GPIOE,GPIO_PIN_11, GPIO_PIN_SET);
+
+#define Y_EN_LOW()    HAL_GPIO_WritePin(GPIOD,GPIO_PIN_7, GPIO_PIN_RESET);
+#define Y_DIR_LOW()   HAL_GPIO_WritePin(GPIOE,GPIO_PIN_8, GPIO_PIN_RESET);
+#define Y_STEP_LOW()  HAL_GPIO_WritePin(GPIOE,GPIO_PIN_11, GPIO_PIN_RESET);
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
+
+UART_HandleTypeDef huart3;
+
+/* USER CODE BEGIN PV */
+
+//------------------------------------
+volatile uint32_t time_tick = 0;
+
+unsigned int curr_millis = 0;
+unsigned int prev_millis_x = 0;
+unsigned int prev_millis_y = 0;
+
+
+unsigned int curr_micros = 0;
+unsigned int prev_micros_x = 0;
+unsigned int prev_micros_y = 0;
+//-------------------------------------
+char toggle_x = 0;
+char toggle_y = 0;
+int step_count_x = 0;
+int step_count_y = 0;
+
+int motor_move_x = 0;
+int motor_move_y = 0;
+
+int gcode_index = 0;
+int state = 0;
+
+// ?��?�� ?��?���?????���???? 보기?��?��?�� ?��??�????
+double prev_x = 66;
+double prev_y = 82;
+
+/*double prev_x = 0;
+double prev_y = 0;*/
+
+double diff_x = 0;
+double diff_y = 0;
+
+unsigned int count_motor_x = 0;
+unsigned int count_motor_y = 0;
+
+enum {
+  LEFT = 0x01, RIGHT = 0x02, UP = 0x04, DOWN = 0x08
+};
+
+/*int rect_pos[4][2] = {{50, 0}, {50, 50}, {0, 50}, {0, 0}};
+int tri_pos[3][2] = {{50, 0}, {50, 30}, {0, 0}};*/
+int speed_x = 0;
+int speed_y = 0;
+
+char array_string[4][10];
+char string_index[4] = {'X', 'Y', 'E', 'F'};
+
+int which_array = 0;
+int index_array = 0;
+
+enum {
+  ARRAY_X = 0,
+  ARRAY_Y,
+  ARRAY_E,
+  ARRAY_F
+};
+
+//float xy_pos_float[200][4];
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+void motor_direction(char dir) {
+  if (dir == LEFT) {
+    X_DIR_LOW();
+  }
+  if (dir == RIGHT) {
+    X_DIR_HIGH();
+  }
+  if (dir == UP) {
+    Y_DIR_LOW();
+  }
+  if (dir == DOWN) {
+    Y_DIR_HIGH();
+  }
+}
+
+
+//======================================================================================
+
+
+void motor_move_1(double x, double y,int speed)
+{
+  diff_x = x - prev_x; // ?�� ?��?���?????�� ?��?��?��
+  diff_y = y - prev_y;
+  if (diff_x < 0)
+  {
+    motor_direction(LEFT);
+
+  }
+  else if (diff_x >= 0)
+  {
+    motor_direction(RIGHT);
+  }
+
+  if (diff_y > 0)
+  {
+    motor_direction(UP);
+  }
+  else if (diff_y <= 0)
+  {
+    motor_direction(DOWN);
+  }
+
+//--------------------------------------------
+  // motor count
+  if (diff_x >= 0)
+  {
+    count_motor_x = (int)(diff_x * 80);
+  }
+  else if (diff_x < 0)
+  {
+    count_motor_x = (int)(diff_x * (-80));
+  }
+
+  if (diff_y >=0)
+  {
+    count_motor_y = (int)(diff_y * 80);
+  }
+  else if (diff_y < 0)
+  {
+    count_motor_y = (int)(diff_y * (-80));
+  }
+
+  if (count_motor_x > 0) motor_move_x = 1;
+  if (count_motor_y > 0) motor_move_y = 1;
+
+
+  prev_x = x;
+  prev_y = y;
+//------------------------------------------------------
+  // speed
+
+  float speed_per_second = (float)((float)speed/60.0);
+
+  int half_clock = (int)(12500/speed_per_second/2.0);
+
+  float theta = atan2(count_motor_x,count_motor_y);
+  if (count_motor_x != 0 && count_motor_y != 0)
+   {
+     speed_x = (int)(half_clock / sin(theta));
+     speed_y = (int)(half_clock / cos(theta));
+   }
+   else if (count_motor_x == 0 && count_motor_y == 0)
+   {
+     speed_x = 200;
+     speed_y = 200;
+   }
+   else if (count_motor_x == 0)
+   {
+     speed_x = 200;
+     speed_y = half_clock;
+   }
+   else if (count_motor_y == 0)
+   {
+     speed_x = half_clock;
+     speed_y = 200;
+   }
+  TIM2->ARR = speed_x -1;
+  TIM3->ARR = speed_y -1;
+
+
+   curr_micros = prev_micros_x = prev_micros_y = micros();
+}
+
+
+
+//=====================================================================================
+
+
+#define SIZE_BUF 486
+unsigned char buf_gcode_string[SIZE_BUF][4][50];
+float buf_gcode[SIZE_BUF][4];
+int index_buf = 0;
+char which_buf = 0;
+char index_char[4] = {'X', 'Y', 'E', 'F'};
+void xy_pos_parsing_1()
+{
+
+  for (int i = 0; i < SIZE_BUF; i++)
+  {
+
+	  for (int j = 0; j < 50; j++)
+	    {
+	      for (int k = 0; k < 4; k++)
+	      {
+	        buf_gcode_string[i][k][j] = 0;
+	      }
+	    }
+
+    int str_len = strlen(xy_pos_string[i]);
+
+    if (xy_pos_string[i][0] == 'G' && xy_pos_string[i][1] == '1')
+    {
+      for (int j = 2; j < str_len; j++)
+      {
+        for (int k = 0; k < 4; k++)
+        {
+          if (xy_pos_string[i][j] == index_char[k])
+          {
+            index_buf = 0;
+            which_buf = k;
+          }
+        }
+          if (xy_pos_string[i][j] != ' ')
+            buf_gcode_string[i][which_buf][index_buf++] = xy_pos_string[i][j];
+      }
+    }
+    for(int j = 0;j < 4;j++)
+    {
+    	buf_gcode[i][j] = atof((buf_gcode_string[i][j]+1));
+    	if(buf_gcode[i][j] == 0 && i != 0)
+    	{
+   			buf_gcode[i][j] = buf_gcode[i-1][j];
+    	}
+
+    }
+  }
+
+
+  for (int i = 0; i < SIZE_BUF; i++)
+  {
+	printf("[%d] ",i);
+    printf(" %f", buf_gcode[i][0]);
+    printf(" %f", buf_gcode[i][1]);
+    printf(" %f", buf_gcode[i][2]);
+    printf(" %f\r\n", buf_gcode[i][3]);
+  }
+
+}
+
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART3_UART_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
+  /* USER CODE BEGIN 2 */
+
+  printf("haha\r\n");
+
+  xy_pos_parsing_1();
+
+  X_EN_LOW();
+  Y_EN_LOW();
+  //motor_direction(LEFT);
+  //motor_move_x = 1;
+  //motor_move_y = 0;
+
+
+  TIM2->CR1 = 0x01;
+  NVIC->ISER[0] |= (0x01<<28);
+  TIM3->CR1 = 0x01;
+  NVIC->ISER[0] |= (0x01<<29);
+
+  while (1) {
+
+    if (motor_move_x == 0 && motor_move_y == 0)
+    {
+      motor_move_1(((double)buf_gcode[gcode_index][0]),(double)(buf_gcode[gcode_index][1]),(int)(buf_gcode[gcode_index][3]));
+      gcode_index++;
+      if (gcode_index == SIZE_BUF)
+      {
+        gcode_index = 0;
+      }
+    }
+    //===================================================================
+    curr_micros = micros();
+
+ /*   if (curr_micros - prev_micros_x >= speed_x) {
+      prev_micros_x = curr_micros;
+
+
+    }
+    if (curr_micros - prev_micros_y >= speed_y) {
+      prev_micros_y = curr_micros;
+
+
+    }*/
+  }
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1) {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 8400;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 10000;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+
+RCC->APB1ENR |=0x01;
+TIM2 -> CNT = 0;
+TIM2 -> DIER = 0x01;
+TIM2 -> PSC = 84 - 1;
+TIM2 -> ARR = 200 -1;
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 8400;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 10000;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  RCC->APB1ENR |= 0x02;
+  TIM3 -> CNT = 0;
+  TIM3 -> DIER = 0x01;
+  TIM3 -> PSC = 84 - 1;
+  TIM3 -> ARR = 200 -1;
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOF_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOF, GPIO_PIN_1|GPIO_PIN_2, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_11, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_7, GPIO_PIN_RESET);
+
+  /*Configure GPIO pins : PF1 PF2 */
+  GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PA7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PE8 PE9 PE11 */
+  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_11;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PD7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+}
+
+/* USER CODE BEGIN 4 */
+//-------------------------------------------------------
+//------------------------
+int __io_putchar(int ch) {
+  HAL_UART_Transmit(&huart3, (uint8_t*) &ch, 1, 0xFFFF);
+
+  return ch;
+}
+//------------------------
+void Time_Update(void) {
+  time_tick++;
+  if (time_tick == 0x400000UL)
+    time_tick = 0;
+
+}
+
+unsigned int GetTick() {
+  return time_tick;
+}
+
+unsigned int millis() {
+  return time_tick;
+}
+
+#define SYS_CLOCK    168
+#define SYSTICK_LOAD (168000 - 1)
+
+unsigned int micros() {
+  return (time_tick & 0x3FFFFF) * 1000
+         + (SYSTICK_LOAD - SysTick->VAL) / SYS_CLOCK;
+}
+
+void delay_ms(unsigned int ms) {
+  unsigned int tickstart = GetTick();
+
+  while ((GetTick() - tickstart) < ms)
+    ;
+}
+
+void delay_us(unsigned int us) {
+  unsigned int temp = micros();
+  unsigned int comp = temp + us;
+  char flag = 0;
+  while (comp > temp) {
+    if (((time_tick & 0x3FFFFF) == 0) && (flag == 0)) {
+      flag = 1;
+    }
+    if (flag)
+      temp = micros() + 0x400000UL * 1000;
+    else
+      temp = micros();
+  }
+}
+
+void timer2_isr()
+{
+	if (motor_move_x == 1)
+	{
+	       if (toggle_x == 1) {
+	          toggle_x = 0;
+	          X_STEP_HIGH();
+	        }
+	        else if (toggle_x == 0) {
+	          toggle_x = 1;
+	          X_STEP_LOW();
+
+	          step_count_x++;
+	          if (step_count_x >= count_motor_x) {
+	            step_count_x = 0;
+	            motor_move_x = 0;
+	          }
+	        }
+	}
+}
+void timer3_isr()
+{
+	if (motor_move_y == 1) {
+
+	        if (toggle_y == 1) {
+	          toggle_y = 0;
+	          Y_STEP_HIGH();
+	        }
+	        else if (toggle_y == 0) {
+	          toggle_y = 1;
+	          Y_STEP_LOW();
+
+	          step_count_y++;
+	          if (step_count_y >= count_motor_y) {
+	            step_count_y = 0;
+	            motor_move_y = 0;
+	          }
+	        }
+	      }
+}
+//-------------------------------------------------------
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1) {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
+
+/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
